@@ -1,6 +1,6 @@
 #!perl
 
-use Test::More tests => 10 + 10;
+use Test::More tests => 10 + 10 + 10;
 
 use Music::Gestalt;
 use MIDI;
@@ -47,3 +47,20 @@ is($g->VelocityMiddle(),  undef);
 is($g->VelocityRange(),   undef);
 
 is($g->Duration(), 0);
+
+# Test properties of gestalt with single note
+
+$g = Music::Gestalt->new(score => [['note', 0, 100, 1, 60, 100]]);
+isa_ok($g, 'Music::Gestalt');
+
+is($g->PitchLowest(),  60);
+is($g->PitchHighest(), 60);
+is($g->PitchMiddle(),  60);
+is($g->PitchRange(),   0);
+
+is($g->VelocityLowest(),  100);
+is($g->VelocityHighest(), 100);
+is($g->VelocityMiddle(),  100);
+is($g->VelocityRange(),   0);
+
+is($g->Duration(), 100);

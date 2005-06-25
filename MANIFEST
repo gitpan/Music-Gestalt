@@ -6,8 +6,9 @@ README
 lib/Music/Gestalt.pm
 t/00-load.t
 t/01-roundtrip_score.t
-t/02-properties.t
+t/02-read_properties.t
 t/03-append.t
+t/04-write_properties.t
 t/pod-coverage.t
 t/pod.t
 t-data/BWV227_Jesu_meine_Freude.mid

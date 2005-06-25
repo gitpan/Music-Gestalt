@@ -3,7 +3,7 @@ package Music::Gestalt;
 use warnings;
 use strict;
 use fields
-  qw (notes duration pitch_base pitch_extent velocity_base velocity_extent);
+  qw (notes duration pitch_base pitch_extent velocity_base velocity_extent pitches pitches_count);
 use 5.0061;
 
 =head1 NAME
@@ -16,7 +16,7 @@ Version 0.01
 
 =cut
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 =head1 SYNOPSIS
 
@@ -47,6 +47,7 @@ sub new {
     my %params = @_;
     my $self   = fields::new($class);
 
+    $self->{pitches_count} = 0;
     $self->_InitializeFromScore($params{score})
       if (ref $params{score} eq 'ARRAY');
 
@@ -58,32 +59,41 @@ sub new {
 sub _InitializeFromScore {
     my ($self, $score) = @_;
 
-    my $max_time     = 0;
-    my $min_pitch    = 128;
-    my $max_pitch    = -1;
-    my $min_velocity = 128;
-    my $max_velocity = -1;
+    my ($max_time, $min_pitch, $max_pitch, $min_velocity, $max_velocity);
 
     # find min/max values
+    # #0: 'note'
+    # #1: start time
+    # #2: duration
+    # #3: channel
+    # #4: note
+    # #5: velocity
     foreach (@$score) {
         next unless $_->[0] eq 'note';
 
         # min_time is always 0
-        $max_time     = $_->[1] + $_->[2] if $_->[1] + $_->[2] > $max_time;
-        $min_pitch    = $_->[4]           if $_->[4] < $min_pitch;
-        $max_pitch    = $_->[4]           if $_->[4] > $max_pitch;
-        $min_velocity = $_->[5]           if $_->[5] < $min_velocity;
-        $max_velocity = $_->[5]           if $_->[5] > $max_velocity;
+        $max_time = $_->[1] + $_->[2]
+          if (!defined $max_time || $_->[1] + $_->[2] > $max_time);
+        $min_pitch = $_->[4]
+          if (!defined $min_pitch || $_->[4] < $min_pitch);
+        $max_pitch = $_->[4]
+          if (!defined $max_pitch || $_->[4] > $max_pitch);
+        $min_velocity = $_->[5]
+          if (!defined $min_velocity || $_->[5] < $min_velocity);
+        $max_velocity = $_->[5]
+          if (!defined $max_velocity || $_->[5] > $max_velocity);
     }
 
-    $self->{pitch_base}      = $min_pitch;
-    $self->{pitch_extent}    = $max_pitch - $min_pitch;
+    $self->{pitch_base}   = $min_pitch;
+    $self->{pitch_extent} = defined $min_pitch
+      && defined $max_pitch ? $max_pitch - $min_pitch : undef;
     $self->{velocity_base}   = $min_velocity;
-    $self->{velocity_extent} = $max_velocity - $min_velocity;
-    $self->{duration}        = $max_time;
-    $self->{notes}           = [];
+    $self->{velocity_extent} = defined $min_velocity
+      && defined $max_velocity ? $max_velocity - $min_velocity : undef;
+    $self->{duration} = $max_time || 0;
+    $self->{notes}    = [];
 
-    return if ($max_time == 0);
+    return if (!defined $max_time || $max_time == 0);
 
     my @notes           = ();
     my $pitch_extent    = ($max_pitch - $min_pitch);
@@ -103,118 +113,207 @@ sub _InitializeFromScore {
     $self->{notes} = [@notes];
 }
 
+sub _min {
+    my ($a, $b) = @_;
+
+    return $a < $b ? $a : $b;
+}
+
+sub _max {
+    my ($a, $b) = @_;
+
+    return $a > $b ? $a : $b;
+}
+
+sub _CalcPitch {
+    my ($self, $v) = @_;
+
+    return _max(0,
+        _min(int($self->{pitch_base} + $v * $self->{pitch_extent} + 0.5), 127));
+}
+
+sub _CalcVelocity {
+    my ($self, $v) = @_;
+
+    return _max(
+        0,
+        _min(
+            int($self->{velocity_base} + $v * $self->{velocity_extent} + 0.5),
+            127));
+}
+
 =head1 PROPERTIES
 
 =head2 C<PitchLowest>
 
-Returns lowest pitch used in this gestalt.
+Sets (if you pass a value) and returns lowest pitch used in this gestalt.
 
 =cut
 
 sub PitchLowest {
-    my $self = shift;
+    my ($self, $v) = @_;
+
+    if (defined $v) {
+        $v = _max(0, _min($self->{pitch_base} + $self->{pitch_extent}, $v));
+        $self->{pitch_extent} =
+          $self->{pitch_base} + $self->{pitch_extent} - $v;
+        $self->{pitch_base} = $v;
+    }
 
     return $self->{pitch_base};
 }
 
 =head2 C<PitchHighest>
 
-Returns highest pitch used in this gestalt.
+Sets (if you pass a value) and returns highest pitch used in this gestalt.
 
 =cut
 
 sub PitchHighest {
-    my $self = shift;
+    my ($self, $v) = @_;
 
     return undef
-      unless defined $self->{pitch_base} && $self->{pitch_extent};
+      unless defined $self->{pitch_base} && defined $self->{pitch_extent};
+
+    if (defined $v) {
+        $v = _min(127, _max($self->{pitch_base}, $v));
+        $self->{pitch_extent} = $v - $self->{pitch_base};
+    }
+
     return $self->{pitch_base} + $self->{pitch_extent};
 }
 
 =head2 C<PitchMiddle>
 
-Returns middle pitch of the range used in this gestalt.
+Sets (if you pass a value) and returns middle pitch of the range used in this gestalt.
 
 =cut
 
 sub PitchMiddle {
-    my $self = shift;
+    my ($self, $v) = @_;
 
     return undef
-      unless defined $self->{pitch_base} && $self->{pitch_extent};
+      unless defined $self->{pitch_base} && defined $self->{pitch_extent};
+
+    if (defined $v) {
+        $v = _min(_max($v, 0), 127);
+        my $pm_old = (2 * $self->{pitch_base} + $self->{pitch_extent}) / 2;
+        $self->{pitch_base} += $v - $pm_old;
+    }
+
     return (2 * $self->{pitch_base} + $self->{pitch_extent}) / 2;
 }
 
 =head2 C<PitchRange>
 
 Returns the pitch range used in this gestalt, ie. the pitches that occur
-will be pitch middle +/- pitch range.
+will be between pitch middle +/- pitch range.
+
+If you pass a value as parameter, the new pitch range will be calculated
+around the current pitch middle.
 
 =cut
 
 sub PitchRange {
-    my $self = shift;
+    my ($self, $value) = @_;
 
-    return undef
-      unless defined $self->{pitch_base} && $self->{pitch_extent};
-    return ((2 * $self->{pitch_base} + $self->{pitch_extent}) / 2) -
-      $self->{pitch_base};
+    return undef unless defined $self->{pitch_base};
+
+    if (defined $value) {
+        my $old_range = $self->{pitch_extent} / 2;
+        $self->{pitch_extent} = 2 * $value;
+        $self->{pitch_base} += $old_range - $value;
+    }
+
+    return undef unless defined $self->{pitch_extent};
+    return $self->{pitch_extent} / 2;
 }
 
 =head2 C<VelocityLowest>
 
-Returns lowest velocity used in this gestalt.
+Sets (if you pass a value) and returns lowest velocity used in this gestalt.
 
 =cut
 
 sub VelocityLowest {
-    my $self = shift;
+    my ($self, $v) = @_;
+
+    if (defined $v) {
+        $v =
+          _max(0, _min($self->{velocity_base} + $self->{velocity_extent}, $v));
+        $self->{velocity_extent} =
+          $self->{velocity_base} + $self->{velocity_extent} - $v;
+        $self->{velocity_base} = $v;
+    }
 
     return $self->{velocity_base};
 }
 
 =head2 C<VelocityHighest>
 
-Returns highest velocity used in this gestalt.
+Sets (if you pass a value) and returns highest velocity used in this gestalt.
 
 =cut
 
 sub VelocityHighest {
-    my $self = shift;
+    my ($self, $v) = @_;
 
     return undef
-      unless defined $self->{velocity_base} && $self->{velocity_extent};
+      unless defined $self->{velocity_base} && defined $self->{velocity_extent};
+
+    if (defined $v) {
+        $v = _min(127, _max($self->{velocity_base}, $v));
+        $self->{velocity_extent} = $v - $self->{velocity_base};
+    }
+
     return $self->{velocity_base} + $self->{velocity_extent};
 }
 
 =head2 C<VelocityMiddle>
 
-Returns middle velocity of the range used in this gestalt.
+Sets (if you pass a value) and returns middle velocity of the range used in this gestalt.
 
 =cut
 
 sub VelocityMiddle {
-    my $self = shift;
+    my ($self, $v) = @_;
 
     return undef
-      unless defined $self->{velocity_base} && $self->{velocity_extent};
+      unless defined $self->{velocity_base} && defined $self->{velocity_extent};
+
+    if (defined $v) {
+        $v = _min(_max($v, 0), 127);
+        my $vm_old =
+          (2 * $self->{velocity_base} + $self->{velocity_extent}) / 2;
+        $self->{velocity_base} += $v - $vm_old;
+    }
+
     return (2 * $self->{velocity_base} + $self->{velocity_extent}) / 2;
 }
 
 =head2 C<VelocityRange>
 
-Returns the velocity range used in this gestalt, ie. the velocityes that occur
-will be velocity middle +/- velocity range.
+Returns the velocity range used in this gestalt, ie. the velocities that occur
+will be between velocity middle +/- velocity range.
+
+If you pass a value as parameter, the new velocity range will be calculated
+around the current velocity middle.
 
 =cut
 
 sub VelocityRange {
-    my $self = shift;
+    my ($self, $value) = @_;
 
-    return undef
-      unless defined $self->{velocity_base} && $self->{velocity_extent};
-    return ((2 * $self->{velocity_base} + $self->{velocity_extent}) / 2) -
-      $self->{velocity_base};
+    return undef unless defined $self->{velocity_base};
+
+    if (defined $value) {
+        my $old_range = $self->{velocity_extent} / 2;
+        $self->{velocity_extent} = 2 * $value;
+        $self->{velocity_base} += $old_range - $value;
+    }
+
+    return undef unless defined $self->{velocity_extent};
+    return $self->{velocity_extent} / 2;
 }
 
 =head2 C<Duration>
@@ -257,14 +356,9 @@ sub AsScore {
     foreach (@{$self->{notes}}) {
         push @score,
           [
-              'note',
-              $_->[0] * $self->{duration},
-              $_->[1] * $self->{duration},
-              int(($_->[2] * 15 + 0.5) + 1),
-              int($self->{pitch_base} + $_->[3] * $self->{pitch_extent} + 0.5),
-              int(
-                  $self->{velocity_base} + $_->[4] * $self->{velocity_extent} +
-                    0.5)];
+            'note',                      $_->[0] * $self->{duration},
+            $_->[1] * $self->{duration}, int(($_->[2] * 15 + 0.5) + 1),
+            $self->_CalcPitch($_->[3]),  $self->_CalcVelocity($_->[4])];
     }
 
     return [@score];
@@ -277,82 +371,95 @@ Appends other Music::Gestalt objects to this object
 =cut
 
 sub Append {
-      my $self = shift;
+    my $self = shift;
 
-      # 1. Find out lowest/highest pitch and velocity overall
-      my $pitch_lowest     = $self->PitchLowest();
-      my $pitch_highest    = $self->PitchHighest();
-      my $velocity_lowest  = $self->VelocityLowest();
-      my $velocity_highest = $self->VelocityHighest();
-      my $duration         = $self->Duration() || 0;
+    # 1. Find out lowest/highest pitch and velocity overall
+    my $pitch_lowest     = $self->PitchLowest();
+    my $pitch_highest    = $self->PitchHighest();
+    my $velocity_lowest  = $self->VelocityLowest();
+    my $velocity_highest = $self->VelocityHighest();
+    my $duration         = $self->Duration() || 0;
 
-      @_ = grep { UNIVERSAL::isa($_, 'Music::Gestalt') } @_;
-      foreach (@_) {
-          $pitch_lowest = $_->PitchLowest()
-            if (!defined $pitch_lowest || $_->PitchLowest() < $pitch_lowest);
-          $pitch_highest = $_->PitchHighest()
-            if (!defined $pitch_highest || $_->PitchHighest() > $pitch_highest);
-          $velocity_lowest = $_->VelocityLowest()
-            if (!defined $velocity_lowest
-              || $_->VelocityLowest() < $velocity_lowest);
-          $velocity_highest = $_->VelocityHighest()
-            if (!defined $velocity_highest
-              || $_->VelocityHighest() > $velocity_highest);
-          $duration += $_->Duration;
-      }
+    @_ = grep { UNIVERSAL::isa($_, 'Music::Gestalt') } @_;
+    foreach (@_) {
+        $pitch_lowest = $_->PitchLowest()
+          if (!defined $pitch_lowest || $_->PitchLowest() < $pitch_lowest);
+        $pitch_highest = $_->PitchHighest()
+          if (!defined $pitch_highest || $_->PitchHighest() > $pitch_highest);
+        $velocity_lowest = $_->VelocityLowest()
+          if (!defined $velocity_lowest
+            || $_->VelocityLowest() < $velocity_lowest);
+        $velocity_highest = $_->VelocityHighest()
+          if (!defined $velocity_highest
+            || $_->VelocityHighest() > $velocity_highest);
+        $duration += $_->Duration;
+    }
 
-      return
-        if ( !defined $pitch_lowest
-          || !defined $pitch_highest
-          || !defined $velocity_lowest
-          || !defined $velocity_highest);
+    return
+      if ( !defined $pitch_lowest
+        || !defined $pitch_highest
+        || !defined $velocity_lowest
+        || !defined $velocity_highest);
 
-      my $pitch_extent    = $pitch_highest - $pitch_lowest;
-      my $velocity_extent = $velocity_highest - $velocity_lowest;
+    my $pitch_extent    = $pitch_highest - $pitch_lowest;
+    my $velocity_extent = $velocity_highest - $velocity_lowest;
 
-      # 2. Transform notes in this gestalt to new pitch
-      foreach (@{$self->{notes}}) {
+    # 2. Transform notes in this gestalt to new pitch
+    foreach (@{$self->{notes}}) {
 
-          # start time, duration, pitch, velocity
-          $_->[0] = $_->[0] * $self->{duration} / $duration;
-          $_->[1] = $_->[1] * $self->{duration} / $duration;
-          # channel stays as it is
-          $_->[3] =
-            ($self->{pitch_base} - $pitch_lowest + $self->{pitch_extent} *
-                $_->[3]) / $pitch_extent;
-          $_->[4] =
-            ($self->{velocity_base} - $velocity_lowest +
-                $self->{velocity_extent} * $_->[4]) / $velocity_extent;
-      }
+        # start time, duration, pitch, velocity
+        $_->[0] = $_->[0] * $self->{duration} / $duration;
+        $_->[1] = $_->[1] * $self->{duration} / $duration;
 
-      # 3. Transform and append notes in the gestalts to be appended
-      my $time_pos = $self->{duration} || 0;
+        # channel stays as it is
+        $_->[3] =
+          $pitch_extent == 0 ? 0 :
+          (
+            (
+                $self->{pitch_base} - $pitch_lowest + $self->{pitch_extent} *
+                  $_->[3]) / $pitch_extent);
+        $_->[4] =
+          $velocity_extent == 0 ? 0 :
+          (
+            (
+                $self->{velocity_base} - $velocity_lowest +
+                  $self->{velocity_extent} * $_->[4]) / $velocity_extent);
+    }
 
-      foreach my $g (@_) {
-          my $time_delta      = $time_pos / $duration;
-          my $gpitchextent    = $g->PitchHighest() - $g->PitchLowest();
-          my $gvelocityextent = $g->VelocityHighest() - $g->VelocityLowest();
-          foreach ($g->Notes()) {
-              push @{$self->{notes}},
-                [
-                  $time_delta + ($_->[0] * $g->Duration() / $duration),
-                  $_->[1] * $g->Duration() / $duration,
-                  $_->[2],
-                  ($g->PitchLowest() - $pitch_lowest + $gpitchextent * $_->[3])
-                    / $pitch_extent,
+    # 3. Transform and append notes in the gestalts to be appended
+    my $time_pos = $self->{duration} || 0;
+
+    foreach my $g (@_) {
+        my $time_delta      = $time_pos / $duration;
+        my $gpitchextent    = $g->PitchHighest() - $g->PitchLowest();
+        my $gvelocityextent = $g->VelocityHighest() - $g->VelocityLowest();
+        foreach ($g->Notes()) {
+            my $dur = $g->Duration() / $duration;
+            push @{$self->{notes}},
+              [
+                $time_delta + ($_->[0] * $dur),
+                $_->[1] * $dur,
+                $_->[2],
+                $pitch_extent == 0 ? 0 :
                   (
-                      $g->VelocityLowest() - $velocity_lowest +
-                        $gvelocityextent * $_->[4]) / $velocity_extent];
-          }
-          $time_pos += $g->Duration();
-      }
+                    (
+                        $g->PitchLowest() - $pitch_lowest + $gpitchextent *
+                          $_->[3]) / $pitch_extent),
+                $velocity_extent == 0 ? 0 :
+                  (
+                    (
+                        $g->VelocityLowest() - $velocity_lowest +
+                          $gvelocityextent * $_->[4]) / $velocity_extent)];
+        }
+        $time_pos += $g->Duration();
+    }
 
-      # 4. Save new attributes in this gestalt
-      $self->{pitch_base}      = $pitch_lowest;
-      $self->{pitch_extent}    = $pitch_extent;
-      $self->{velocity_base}   = $velocity_lowest;
-      $self->{velocity_extent} = $velocity_extent;
-      $self->{duration}        = $duration;
+    # 4. Save new attributes in this gestalt
+    $self->{pitch_base}      = $pitch_lowest;
+    $self->{pitch_extent}    = $pitch_extent;
+    $self->{velocity_base}   = $velocity_lowest;
+    $self->{velocity_extent} = $velocity_extent;
+    $self->{duration}        = $duration;
 }
 
 =head1 AUTHOR

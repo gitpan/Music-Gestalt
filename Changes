@@ -1,4 +1,8 @@
 Revision history for Music-Gestalt
 
+0.02    2005-June-26
+        Bugfixes in the conversion from/to scores and in the append function.
+        Pitch and velocity parameters are now changeable.
+
 0.01    2005-June-19
         Initial version.
