@@ -1,5 +1,10 @@
 Revision history for Music-Gestalt
 
+0.03    2005-June-27
+        Duration is now changeable.
+        Added Density.
+        Added Mirror functions
+
 0.02    2005-June-26
         Bugfixes in the conversion from/to scores and in the append function.
         Pitch and velocity parameters are now changeable.

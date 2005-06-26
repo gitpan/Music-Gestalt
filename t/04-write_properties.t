@@ -1,6 +1,6 @@
 #!perl
 
-use Test::More tests => 1 + 6 + 6 + 8 + 8 + 10 + 8 + 8 + 10;
+use Test::More tests => 1 + 6 + 6 + 8 + 8 + 10 + 8 + 8 + 10 + 7;
 
 use Music::Gestalt;
 use MIDI;
@@ -187,3 +187,18 @@ is_deeply(
 is($g->VelocityMiddle($vm), $vm);
 is_deeply($g->AsScore(), $score);
 
+# --- Duration ---
+$g = Music::Gestalt->new(score => $score);
+my $d = $g->Duration();
+is($d, 400);
+is($g->Duration(-1), 0);
+is($g->Duration($d * 2), $d * 2);
+is_deeply($g->AsScore(), [
+    ['note', 100, 100, 1, 20,  10],
+    ['note', 300, 100, 1, 50,  32],
+    ['note', 500, 100, 1, 90,  96],
+    ['note', 700, 100, 1, 120, 117]]);
+is($g->Duration(0), 0);
+is_deeply($g->AsScore(), [map { my @a = @$_; $a[1] = $a[2] = 0; \@a; } @$score]);
+$g->Duration($d);
+is_deeply($g->AsScore(), $score);

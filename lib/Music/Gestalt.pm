@@ -3,7 +3,7 @@ package Music::Gestalt;
 use warnings;
 use strict;
 use fields
-  qw (notes duration pitch_base pitch_extent velocity_base velocity_extent pitches pitches_count);
+  qw (density duration notes pitch_base pitch_extent pitches pitches_count velocity_base velocity_extent);
 use 5.0061;
 
 =head1 NAME
@@ -12,11 +12,11 @@ Music::Gestalt - Compose music using gestalts.
 
 =head1 VERSION
 
-Version 0.01
+Version 0.03
 
 =cut
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 =head1 SYNOPSIS
 
@@ -48,6 +48,7 @@ sub new {
     my $self   = fields::new($class);
 
     $self->{pitches_count} = 0;
+    $self->{density}       = 1;
     $self->_InitializeFromScore($params{score})
       if (ref $params{score} eq 'ARRAY');
 
@@ -320,11 +321,14 @@ sub VelocityRange {
 
 Returns the duration of this gestalt.
 
+If you pass a value as a parameter, it will be used as new duration.
+
 =cut
 
 sub Duration {
-    my $self = shift;
+    my ($self, $v) = @_;
 
+    $self->{duration} = _max(0, $v) if defined $v;
     return $self->{duration} || 0;
 }
 
@@ -341,6 +345,25 @@ sub Notes {
     return @{$self->{notes}};
 }
 
+=head2 C<Density>
+
+Sets and returns the density of this gestalt. The initial density is 1, meaning
+that all notes will be used. At density 0, a score created from this gestalt
+will have no events. At density 0.5, a score created from this gestalt will
+have half the original events, selected at random.
+
+It is intentional that the density may not be greater than 1; there are too
+many possible ways to generate additional events. 
+
+=cut
+
+sub Density {
+    my ($self, $v) = @_;
+
+    $self->{density} = _min(1, _max(0, $v)) if defined $v;
+    return $self->{density};
+}
+
 =head1 METHODS
 
 =head2 C<AsScore>
@@ -352,6 +375,8 @@ Returns a structure representing the gestalt in L<MIDI::Score> format.
 sub AsScore {
     my $self = shift;
 
+    return [] if $self->{density} == 0;
+
     my @score = ();
     foreach (@{$self->{notes}}) {
         push @score,
@@ -359,6 +384,13 @@ sub AsScore {
             'note',                      $_->[0] * $self->{duration},
             $_->[1] * $self->{duration}, int(($_->[2] * 15 + 0.5) + 1),
             $self->_CalcPitch($_->[3]),  $self->_CalcVelocity($_->[4])];
+    }
+
+    # remove events if density < 1
+    if ($self->{density} < 1) {
+        for (1 .. int((1 - $self->{density}) * scalar @score)) {
+            splice @score, int(rand(scalar @score)), 1;
+        }
     }
 
     return [@score];
@@ -462,6 +494,43 @@ sub Append {
     $self->{duration}        = $duration;
 }
 
+=head2 C<MirrorTime>, C<MirrorPitch>, C<MirrorVelocity>
+
+Mirrors the start times, pitches and velocites found in the gestalt.
+
+=cut
+
+sub _mirror {
+    my ($self, $param) = @_;
+
+    return unless ref $self->{notes} eq 'ARRAY';
+    foreach (@{$self->{notes}}) {
+    
+#        die "\n\n\nparam = $param\n\n\n";
+
+        # start time, duration, pitch, velocity
+        $_->[$param] = 1 - $_->[$param];
+    }
+}
+
+sub MirrorTime {
+    my ($self) = @_;
+
+    $self->_mirror(0);
+}
+
+sub MirrorPitch {
+    my ($self) = @_;
+
+    $self->_mirror(3);
+}
+
+sub MirrorVelocity {
+    my ($self) = @_;
+
+    $self->_mirror(4);
+}
+
 =head1 AUTHOR
 
 Christian Renz, E<lt>crenz @ web42.comE<gt>
@@ -475,8 +544,6 @@ I will be notified, and then you'll automatically be notified of progress on
 your bug as I make changes.
 
 Please also consider adding a test case to your bug report (.t script).
-
-=head1 ACKNOWLEDGEMENTS
 
 =head1 COPYRIGHT & LICENSE
 
