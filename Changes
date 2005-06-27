@@ -1,5 +1,8 @@
 Revision history for Music-Gestalt
 
+0.04    2005-June-28
+        Added automation for velocity and pitch middle.
+
 0.03    2005-June-27
         Duration is now changeable.
         Added Density.

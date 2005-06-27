@@ -3,7 +3,7 @@ package Music::Gestalt;
 use warnings;
 use strict;
 use fields
-  qw (density duration notes pitch_base pitch_extent pitches pitches_count velocity_base velocity_extent);
+  qw (automation density duration notes pitch_base pitch_extent pitches pitches_count velocity_base velocity_extent);
 use 5.0061;
 
 =head1 NAME
@@ -12,11 +12,11 @@ Music::Gestalt - Compose music using gestalts.
 
 =head1 VERSION
 
-Version 0.03
+Version 0.04
 
 =cut
 
-our $VERSION = '0.03';
+our $VERSION = '0.04';
 
 =head1 SYNOPSIS
 
@@ -126,21 +126,61 @@ sub _max {
     return $a > $b ? $a : $b;
 }
 
-sub _CalcPitch {
-    my ($self, $v) = @_;
+sub _CalcAutomationValue {
+    my ($self, $param_name, $position, $value) = @_;
 
-    return _max(0,
-        _min(int($self->{pitch_base} + $v * $self->{pitch_extent} + 0.5), 127));
+    return $value
+      unless (ref $self->{automation}->{$param_name} eq 'HASH'
+        && ref $self->{automation}->{$param_name}->{values} eq 'ARRAY');
+    my %am = %{$self->{automation}->{$param_name}};
+
+    my $count = scalar @{$am{values}};
+
+    if ($count == 1) {
+        if ($am{mode} eq 'absolute') {
+            return $am{values}->[0];
+        } else {
+            return $value * $am{values}->[0];
+        }
+    }
+
+    my $time_per_value = 1 / ($count - 1);
+    my $div            = $position / $time_per_value;
+    my $idx            = int($div);
+    my $frac           = $div - $idx;
+    my $base           = $am{values}->[$idx];
+    my $extent = $am{values}->[$idx + 1] - $base;
+    my $val    = $base + $frac * $extent;
+
+    if ($am{mode} eq 'absolute') {
+        return $val;
+    } else {
+        return $value * $val;
+    }
+}
+
+sub _CalcPitch {
+    my ($self, $v, $pos) = @_;
+    
+    my $pb = $self->{pitch_base};
+    my $pe = $self->{pitch_extent};
+
+    if (ref $self->{automation}->{pitch_middle}->{values} eq 'ARRAY') {
+        my $pm = $self->PitchMiddle();
+        $pb += $self->_CalcAutomationValue('pitch_middle', $pos, $pm) - $pm;
+    }
+
+    my $val = $pb + $v * $pe + 0.5;
+    return _max(0, _min(int($val), 127));
 }
 
 sub _CalcVelocity {
-    my ($self, $v) = @_;
+    my ($self, $v, $pos) = @_;
 
-    return _max(
-        0,
-        _min(
-            int($self->{velocity_base} + $v * $self->{velocity_extent} + 0.5),
-            127));
+    my $val =
+      $self->_CalcAutomationValue('velocity', $pos,
+        $self->{velocity_base} + $v * $self->{velocity_extent} + 0.5);
+    return _max(0, _min(int($val), 127));
 }
 
 =head1 PROPERTIES
@@ -381,9 +421,12 @@ sub AsScore {
     foreach (@{$self->{notes}}) {
         push @score,
           [
-            'note',                      $_->[0] * $self->{duration},
-            $_->[1] * $self->{duration}, int(($_->[2] * 15 + 0.5) + 1),
-            $self->_CalcPitch($_->[3]),  $self->_CalcVelocity($_->[4])];
+            'note',
+            $_->[0] * $self->{duration},
+            $_->[1] * $self->{duration},
+            int(($_->[2] * 15 + 0.5) + 1),
+            $self->_CalcPitch($_->[3], $_->[0]),
+            $self->_CalcVelocity($_->[4], $_->[0])];
     }
 
     # remove events if density < 1
@@ -505,8 +548,8 @@ sub _mirror {
 
     return unless ref $self->{notes} eq 'ARRAY';
     foreach (@{$self->{notes}}) {
-    
-#        die "\n\n\nparam = $param\n\n\n";
+
+        #        die "\n\n\nparam = $param\n\n\n";
 
         # start time, duration, pitch, velocity
         $_->[$param] = 1 - $_->[$param];
@@ -530,6 +573,113 @@ sub MirrorVelocity {
 
     $self->_mirror(4);
 }
+
+=head1 AUTOMATION METHODS
+
+Using automation, you can vary a parameter over time (comparable to parameter
+automation in sequencers like Logic or Cubase). For each parameter that can be
+automated, there are three modes available:
+
+=over 4
+
+=item Absolute mode
+
+In this mode, the currently set parameter values will be I<replaced> with the
+values that you pass to the function. If you pass (0, 100), the parameter
+will range from 0 to 100 over the whole gestalt. If you pass (20, 50 20), the
+parameter will first rise from 20 to 50, then in the second half of the gestalt
+fall from 50 to 20. The parameter value is interpolated at the event's position.
+
+=item Relative mode
+
+In this mode, the currently set parameter values will be I<multiplied> with the
+values that you pass to the function. If you pass (0, 1), the parameter
+will fade in over the whole gestalt. If you pass (.2, .5 .2), the
+parameter will first fade in from 20% to 50%, then in the second half of
+the gestalt fade out from 50% to 20%. The parameter value is interpolated
+at the event's position.
+
+=item Off
+
+Automation will not be applied.
+
+=back
+
+Here are some examples how to call the automation functions:
+
+  $g->AutomateVelocityOff(); # default
+  $g->AutomateVelocityAbs(20, 50, 20);
+  $g->AutomateVelocityRel(0, 1);
+
+The values passed to the automation methods will be applied evenly-spaced.
+
+The following automation methods are available:
+
+=over 4
+
+=item C<AutomateVelocityOff>, C<AutomateVelocityAbs>, C<AutomateVelocityRel>
+
+=cut
+
+sub AutomateVelocityOff {
+    my $self = shift;
+
+    delete $self->{automation}->{velocity};
+}
+
+sub AutomateVelocityAbs {
+    my $self = shift;
+    if (scalar @_) {
+        $self->{automation}->{velocity}->{mode}   = 'absolute';
+        $self->{automation}->{velocity}->{values} =
+          [map { _min(127, _max(0, $_)) } @_];
+    }
+
+    return $self->{automation}->{velocity};
+}
+
+sub AutomateVelocityRel {
+    my $self = shift;
+    if (scalar @_) {
+        $self->{automation}->{velocity}->{mode}   = 'relative';
+        $self->{automation}->{velocity}->{values} = [@_];
+    }
+
+    return $self->{automation}->{velocity};
+}
+
+=item C<AutomatePitchMiddleOff>, C<AutomatePitchMiddleAbs>, C<AutomatePitchMiddleRel>
+
+=cut
+
+sub AutomatePitchMiddleOff {
+    my $self = shift;
+
+    delete $self->{automation}->{pitch_middle};
+}
+
+sub AutomatePitchMiddleAbs {
+    my $self = shift;
+    if (scalar @_) {
+        $self->{automation}->{pitch_middle}->{mode}   = 'absolute';
+        $self->{automation}->{pitch_middle}->{values} =
+          [map { _min(127, _max(0, $_)) } @_];
+    }
+
+    return $self->{automation}->{pitch_middle};
+}
+
+sub AutomatePitchMiddleRel {
+    my $self = shift;
+    if (scalar @_) {
+        $self->{automation}->{pitch_middle}->{mode}   = 'relative';
+        $self->{automation}->{pitch_middle}->{values} = [@_];
+    }
+
+    return $self->{automation}->{pitch_middle};
+}
+
+=back
 
 =head1 AUTHOR
 
