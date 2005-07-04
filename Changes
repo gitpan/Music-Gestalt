@@ -1,5 +1,10 @@
 Revision history for Music-Gestalt
 
+0.05    2005-June-
+        Added NoteLength.
+        Changed Perl version requirement to 5.6 (from 5.6.1)
+        Added Pitches and PitchesMode functions
+
 0.04    2005-June-28
         Added automation for velocity and pitch middle.
 

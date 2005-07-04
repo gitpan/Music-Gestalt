@@ -3,8 +3,8 @@ package Music::Gestalt;
 use warnings;
 use strict;
 use fields
-  qw (automation density duration notes pitch_base pitch_extent pitches pitches_count velocity_base velocity_extent);
-use 5.0061;
+  qw (automation density duration notes note_length pitch_base pitch_extent pitches pitches_count pitches_mode pitches_mapping velocity_base velocity_extent);
+use 5.006;
 
 =head1 NAME
 
@@ -12,11 +12,11 @@ Music::Gestalt - Compose music using gestalts.
 
 =head1 VERSION
 
-Version 0.04
+Version 0.05
 
 =cut
 
-our $VERSION = '0.04';
+our $VERSION = '0.05';
 
 =head1 SYNOPSIS
 
@@ -48,9 +48,12 @@ sub new {
     my $self   = fields::new($class);
 
     $self->{pitches_count} = 0;
+    $self->{pitches_mode}  = 'all';
     $self->{density}       = 1;
+    $self->{note_length}   = 1;
     $self->_InitializeFromScore($params{score})
       if (ref $params{score} eq 'ARRAY');
+    $self->_PitchesUpdateMapping();
 
     return $self;
 }
@@ -149,8 +152,8 @@ sub _CalcAutomationValue {
     my $idx            = int($div);
     my $frac           = $div - $idx;
     my $base           = $am{values}->[$idx];
-    my $extent = $am{values}->[$idx + 1] - $base;
-    my $val    = $base + $frac * $extent;
+    my $extent         = $am{values}->[$idx + 1] - $base;
+    my $val            = $base + $frac * $extent;
 
     if ($am{mode} eq 'absolute') {
         return $val;
@@ -161,7 +164,7 @@ sub _CalcAutomationValue {
 
 sub _CalcPitch {
     my ($self, $v, $pos) = @_;
-    
+
     my $pb = $self->{pitch_base};
     my $pe = $self->{pitch_extent};
 
@@ -171,7 +174,9 @@ sub _CalcPitch {
     }
 
     my $val = $pb + $v * $pe + 0.5;
-    return _max(0, _min(int($val), 127));
+    $val = _max(0, _min(int($val), 127));
+
+    return $self->{pitches_mapping}->{$val};
 }
 
 sub _CalcVelocity {
@@ -372,6 +377,23 @@ sub Duration {
     return $self->{duration} || 0;
 }
 
+=head2 C<NoteLength>
+
+Returns the note length property of this gestalt. "1" means that the 
+original note lengths are retained, ".5" means that each note is half
+as long as it originally was.
+
+If you pass a value as a parameter, it will be used as new note length.
+
+=cut
+
+sub NoteLength {
+    my ($self, $v) = @_;
+
+    $self->{note_length} = _max(0, $v) if defined $v;
+    return $self->{note_length} || 0;
+}
+
 =head2 C<Notes>
 
 Returns the note list of this gestalt.
@@ -404,6 +426,75 @@ sub Density {
     return $self->{density};
 }
 
+=head2 C<Pitches>
+
+Returns or sets the pitches used in this gestalt. You should pass areference to a list that contains the pitch numbers used. Returns a
+reference to a list of pitches that will be used.
+An empty list signifies that all pitches are used.
+Note that the set of pitches used is also influenced by the L</"PitchesMode">
+parameter.
+
+=cut
+
+sub Pitches {
+    my ($self, $pitches) = @_;
+    if (defined $pitches && ref $pitches eq 'ARRAY') {
+        $self->{pitches}       = [ map { _max(0, _min($_, 127)) } @$pitches ];
+        $self->{pitches_count} = scalar @$pitches;
+        $self->_PitchesUpdateMapping();
+    }
+
+    if (defined $self->{pitches}) { return $pitches; }
+    else { return []; }
+}
+
+=head2 C<PitchesMode>
+
+Returns or sets the pitch mode used in this gestalt.
+
+=cut
+
+sub _PitchesUpdateMapping {
+    my ($self) = @_;
+
+    if (ref $self->{pitches} eq 'ARRAY' && scalar @{$self->{pitches}} > 0) {
+        my %map;
+        if ($self->{pitches_mode} eq 'nearest') {
+            if (scalar @{$self->{pitches}} == 1) {
+                %map = map { $_ => $self->{pitches}->[0] } 0..127;
+                return $self->{pitches_mapping} = { %map };
+            }
+
+            my @list = sort { $a <=> $b } @{$self->{pitches}};
+            my $idx = 0;
+            for (0 .. 127) {
+                my $diffA = abs($list[$idx] - $_);
+                my $diffB = abs($list[$idx + 1] - $_);
+
+                if ($diffA < $diffB) {
+                    $map{$_} = $list[$idx];
+                } else {
+                    $map{$_} = $list[$idx + 1];
+                    $idx++ if ($idx < $#list);
+                }
+            }
+            return $self->{pitches_mapping} = { %map };
+        }
+    }
+
+    $self->{pitches_mapping} = {map { $_ => $_ } 0 .. 127};
+}
+
+sub PitchesMode {
+    my ($self, $mode) = @_;
+
+    if (defined $mode) {
+        $self->{pitches_mode} = $mode;
+        $self->_PitchesUpdateMapping();
+    }
+    return $self->{pitches_mode};
+}
+
 =head1 METHODS
 
 =head2 C<AsScore>
@@ -423,7 +514,7 @@ sub AsScore {
           [
             'note',
             $_->[0] * $self->{duration},
-            $_->[1] * $self->{duration},
+            $_->[1] * $self->{duration} * $self->{note_length},
             int(($_->[2] * 15 + 0.5) + 1),
             $self->_CalcPitch($_->[3], $_->[0]),
             $self->_CalcVelocity($_->[4], $_->[0])];
@@ -460,7 +551,8 @@ sub Append {
         $pitch_lowest = $_->PitchLowest()
           if (!defined $pitch_lowest || $_->PitchLowest() < $pitch_lowest);
         $pitch_highest = $_->PitchHighest()
-          if (!defined $pitch_highest || $_->PitchHighest() > $pitch_highest);
+          if (!defined $pitch_highest
+            || $_->PitchHighest() > $pitch_highest);
         $velocity_lowest = $_->VelocityLowest()
           if (!defined $velocity_lowest
             || $_->VelocityLowest() < $velocity_lowest);

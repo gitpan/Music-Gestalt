@@ -1,6 +1,6 @@
 #!perl
 
-use Test::More tests => 1 + 6 + 6 + 8 + 8 + 10 + 8 + 8 + 10 + 7;
+use Test::More tests => 1 + 6 + 6 + 8 + 8 + 10 + 8 + 8 + 10 + 8;
 
 use Music::Gestalt;
 use MIDI;
@@ -187,18 +187,23 @@ is_deeply(
 is($g->VelocityMiddle($vm), $vm);
 is_deeply($g->AsScore(), $score);
 
-# --- Duration ---
+# --- NoteLength ---
+$score = [
+    ['note', 50,   50, 1, 60, 80],
+    ['note', 150, 100, 1, 60, 80],
+    ['note', 250, 150, 1, 60, 80],
+    ['note', 350,  50, 1, 60, 80]];
+
 $g = Music::Gestalt->new(score => $score);
-my $d = $g->Duration();
-is($d, 400);
-is($g->Duration(-1), 0);
-is($g->Duration($d * 2), $d * 2);
+is($g->NoteLength(), 1);
+is($g->NoteLength(0), 0);
+is_deeply($g->AsScore(), [map { my @a = @$_; $a[2] = 0; \@a; } @$score]);
+is($g->NoteLength(.5), .5);
 is_deeply($g->AsScore(), [
-    ['note', 100, 100, 1, 20,  10],
-    ['note', 300, 100, 1, 50,  32],
-    ['note', 500, 100, 1, 90,  96],
-    ['note', 700, 100, 1, 120, 117]]);
-is($g->Duration(0), 0);
-is_deeply($g->AsScore(), [map { my @a = @$_; $a[1] = $a[2] = 0; \@a; } @$score]);
-$g->Duration($d);
+    ['note', 50,   25, 1, 60, 80],
+    ['note', 150,  50, 1, 60, 80],
+    ['note', 250,  75, 1, 60, 80],
+    ['note', 350,  25, 1, 60, 80]]);
+is($g->NoteLength(-0.1), 0);
+is($g->NoteLength(1), 1);
 is_deeply($g->AsScore(), $score);
