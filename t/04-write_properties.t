@@ -1,15 +1,20 @@
 #!perl
 
-use Test::More tests => 1 + 6 + 6 + 8 + 8 + 10 + 8 + 8 + 10 + 8;
+use Test::More;
 
 use Music::Gestalt;
 use MIDI;
 use File::Spec::Functions qw(catfile);
 
-# ('note_on', I<start_time>, I<duration>, I<channel>, I<note>, I<velocity>)
+if ($ENV{DEVELOPMENT}) {
+    plan skip_all => 'Skipped during development';
+} else {
+    plan tests => 1 + 6 + 6 + 8 + 8 + 10 + 8 + 8 + 10 + 8;
+}
 
 # These test verify reading and modifying the properties of a gestalt.
 
+# ('note_on', I<start_time>, I<duration>, I<channel>, I<note>, I<velocity>)
 my $score = [
     ['note', 50,  50, 1, 20,  10],
     ['note', 150, 50, 1, 50,  32],

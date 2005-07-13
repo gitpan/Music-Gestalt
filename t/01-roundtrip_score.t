@@ -1,10 +1,16 @@
 #!perl
 
-use Test::More tests => 1 + 4 + 100 + 5;
+use Test::More;
 
 use Music::Gestalt;
 use MIDI;
 use File::Spec::Functions qw(catfile);
+
+if ($ENV{DEVELOPMENT}) {
+    plan skip_all => 'Skipped during development';
+} else {
+    plan tests => 1 + 4 + 100 + 5;
+}
 
 # These tests verify that the round-trip score->gestalt->score works
 # and that it returns the original score.

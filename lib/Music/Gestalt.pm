@@ -3,8 +3,9 @@ package Music::Gestalt;
 use warnings;
 use strict;
 use fields
-  qw (automation density duration notes note_length pitch_base pitch_extent pitches pitches_count pitches_mode pitches_mapping velocity_base velocity_extent);
+  qw (automation density duration notes note_length pitch_base pitch_extent pitches pitches_count pitches_mode pitches_mapping pitches_row_pos velocity_base velocity_extent);
 use 5.006;
+use MIDI::Pitch qw(findsemitone);
 
 =head1 NAME
 
@@ -12,11 +13,11 @@ Music::Gestalt - Compose music using gestalts.
 
 =head1 VERSION
 
-Version 0.05
+Version 0.06
 
 =cut
 
-our $VERSION = '0.05';
+our $VERSION = '0.06';
 
 =head1 SYNOPSIS
 
@@ -176,7 +177,14 @@ sub _CalcPitch {
     my $val = $pb + $v * $pe + 0.5;
     $val = _max(0, _min(int($val), 127));
 
-    return $self->{pitches_mapping}->{$val};
+    my $pitch = $self->{pitches_mapping}->{$val};
+    if ($self->{pitches_mode} eq 'row' && ref $self->{pitches} eq 'ARRAY') {
+        $pitch =
+          findsemitone($self->{pitches}->[$self->{pitches_row_pos}], $pitch);
+        $self->{pitches_row_pos} =
+          ($self->{pitches_row_pos} + 1) % scalar @{$self->{pitches}};
+    }
+    return $pitch;
 }
 
 sub _CalcVelocity {
@@ -439,7 +447,7 @@ parameter.
 sub Pitches {
     my ($self, $pitches) = @_;
     if (defined $pitches && ref $pitches eq 'ARRAY') {
-        $self->{pitches}       = [ map { _max(0, _min($_, 127)) } @$pitches ];
+        $self->{pitches} = [map { _max(0, _min($_, 127)) } @$pitches];
         $self->{pitches_count} = scalar @$pitches;
         $self->_PitchesUpdateMapping();
     }
@@ -461,8 +469,8 @@ sub _PitchesUpdateMapping {
         my %map;
         if ($self->{pitches_mode} eq 'nearest') {
             if (scalar @{$self->{pitches}} == 1) {
-                %map = map { $_ => $self->{pitches}->[0] } 0..127;
-                return $self->{pitches_mapping} = { %map };
+                %map = map { $_ => $self->{pitches}->[0] } 0 .. 127;
+                return $self->{pitches_mapping} = {%map};
             }
 
             my @list = sort { $a <=> $b } @{$self->{pitches}};
@@ -478,7 +486,7 @@ sub _PitchesUpdateMapping {
                     $idx++ if ($idx < $#list);
                 }
             }
-            return $self->{pitches_mapping} = { %map };
+            return $self->{pitches_mapping} = {%map};
         }
     }
 
@@ -509,6 +517,7 @@ sub AsScore {
     return [] if $self->{density} == 0;
 
     my @score = ();
+    $self->{pitches_row_pos} = 0;
     foreach (@{$self->{notes}}) {
         push @score,
           [
@@ -532,7 +541,7 @@ sub AsScore {
 
 =head2 C<Append>
 
-Appends other Music::Gestalt objects to this object
+Appends other Music::Gestalt objects to this object.
 
 =cut
 
@@ -600,8 +609,8 @@ sub Append {
         my $time_delta      = $time_pos / $duration;
         my $gpitchextent    = $g->PitchHighest() - $g->PitchLowest();
         my $gvelocityextent = $g->VelocityHighest() - $g->VelocityLowest();
+        my $dur             = $g->Duration() / $duration;
         foreach ($g->Notes()) {
-            my $dur = $g->Duration() / $duration;
             push @{$self->{notes}},
               [
                 $time_delta + ($_->[0] * $dur),
@@ -619,6 +628,106 @@ sub Append {
                           $gvelocityextent * $_->[4]) / $velocity_extent)];
         }
         $time_pos += $g->Duration();
+    }
+
+    # 4. Save new attributes in this gestalt
+    $self->{pitch_base}      = $pitch_lowest;
+    $self->{pitch_extent}    = $pitch_extent;
+    $self->{velocity_base}   = $velocity_lowest;
+    $self->{velocity_extent} = $velocity_extent;
+    $self->{duration}        = $duration;
+}
+
+=head2 C<Insert>
+
+Inserts other Music::Gestalt objects into this object.
+
+=cut
+
+sub Insert {
+    my $self = shift;
+
+    # 1. Find out lowest/highest pitch and velocity overall
+    my $pitch_lowest     = $self->PitchLowest();
+    my $pitch_highest    = $self->PitchHighest();
+    my $velocity_lowest  = $self->VelocityLowest();
+    my $velocity_highest = $self->VelocityHighest();
+    my $duration         = $self->Duration() || 0;
+
+    @_ = grep { UNIVERSAL::isa($_, 'Music::Gestalt') } @_;
+    foreach (@_) {
+        $pitch_lowest = $_->PitchLowest()
+          if (!defined $pitch_lowest || $_->PitchLowest() < $pitch_lowest);
+        $pitch_highest = $_->PitchHighest()
+          if (!defined $pitch_highest
+            || $_->PitchHighest() > $pitch_highest);
+        $velocity_lowest = $_->VelocityLowest()
+          if (!defined $velocity_lowest
+            || $_->VelocityLowest() < $velocity_lowest);
+        $velocity_highest = $_->VelocityHighest()
+          if (!defined $velocity_highest
+            || $_->VelocityHighest() > $velocity_highest);
+        $duration = $_->Duration() if $_->Duration() > $duration;
+    }
+
+    return
+      if ( !defined $pitch_lowest
+        || !defined $pitch_highest
+        || !defined $velocity_lowest
+        || !defined $velocity_highest);
+
+    my $pitch_extent    = $pitch_highest - $pitch_lowest;
+    my $velocity_extent = $velocity_highest - $velocity_lowest;
+
+    # 2. Transform notes in this gestalt to new pitch
+    foreach (@{$self->{notes}}) {
+
+        # start time, duration, pitch, velocity
+        $_->[0] = $_->[0] * $self->{duration} / $duration;
+        $_->[1] = $_->[1] * $self->{duration} / $duration;
+
+        # channel stays as it is
+        $_->[3] =
+          $pitch_extent == 0 ? 0 :
+          (
+            (
+                $self->{pitch_base} - $pitch_lowest + $self->{pitch_extent} *
+                  $_->[3]) / $pitch_extent);
+        $_->[4] =
+          $velocity_extent == 0 ? 0 :
+          (
+            (
+                $self->{velocity_base} - $velocity_lowest +
+                  $self->{velocity_extent} * $_->[4]) / $velocity_extent);
+    }
+
+    # 3. Transform and insert notes in the gestalts to be inserted
+    foreach my $g (@_) {
+        my $gpitchextent    = $g->PitchHighest() - $g->PitchLowest();
+        my $gvelocityextent = $g->VelocityHighest() - $g->VelocityLowest();
+        my $notes_pos       = 0;
+        my $dur             = $g->Duration() / $duration;
+        foreach ($g->Notes()) {
+
+            my $start = $_->[0] * $dur;
+            $notes_pos++ while ($notes_pos <= $#{$self->{notes}}
+                && $self->{notes}->[$notes_pos]->[0] <= $start);
+            splice @{$self->{notes}}, $notes_pos, 0,
+              [
+                $_->[0] * $dur,
+                $_->[1] * $dur,
+                $_->[2],
+                $pitch_extent == 0 ? 0 :
+                  (
+                    (
+                        $g->PitchLowest() - $pitch_lowest + $gpitchextent *
+                          $_->[3]) / $pitch_extent),
+                $velocity_extent == 0 ? 0 :
+                  (
+                    (
+                        $g->VelocityLowest() - $velocity_lowest +
+                          $gvelocityextent * $_->[4]) / $velocity_extent)];
+        }
     }
 
     # 4. Save new attributes in this gestalt

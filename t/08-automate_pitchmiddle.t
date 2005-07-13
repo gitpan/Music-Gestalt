@@ -1,12 +1,17 @@
 #!perl
 
-use Test::More tests => 137 + 9;
+use Test::More;
 
 use Music::Gestalt;
 use MIDI;
 
-# ('note_on', I<start_time>, I<duration>, I<channel>, I<note>, I<velocity>)
+if ($ENV{DEVELOPMENT}) {
+    plan skip_all => 'Skipped during development';
+} else {
+    plan tests => 137 + 9;
+}
 
+# ('note_on', I<start_time>, I<duration>, I<channel>, I<note>, I<velocity>)
 my $score = [
     ['note', 50,  50, 1, 60,  60],
     ['note', 150, 50, 1, 60,  60],

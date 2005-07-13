@@ -1,10 +1,16 @@
 #!perl
 
-use Test::More tests => 5 * 3;
+use Test::More;
 
 use Music::Gestalt;
 use MIDI;
 use File::Spec::Functions qw(catfile);
+
+if ($ENV{DEVELOPMENT}) {
+    plan skip_all => 'Skipped during development';
+} else {
+    plan tests => 5 * 3;
+}
 
 # These tests verify that the mirroring works
 
